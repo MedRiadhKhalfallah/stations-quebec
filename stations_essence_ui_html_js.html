@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Stations Essence</title>
+  <style>
+    body { font-family: Arial; margin: 20px; background:#f5f5f5 }
+    .controls { margin-bottom: 15px; }
+    .station { background:white; padding:10px; margin-bottom:10px; border-radius:8px; box-shadow:0 2px 4px rgba(0,0,0,0.1) }
+    input, select { padding:6px; margin-right:10px }
+    .error { color:red; margin-top:10px }
+  </style>
+</head>
+<body>
+
+<h2>Stations d'essence</h2>
+
+<div class="controls">
+  <button onclick="getLocation()">Utiliser ma position</button>
+  <input type="text" id="search" placeholder="Recherche (nom, ville...)" />
+  <select id="fuelType">
+    <option value="">Tous carburants</option>
+    <option value="Régulier">Régulier</option>
+    <option value="Super">Super</option>
+    <option value="Diesel">Diesel</option>
+  </select>
+</div>
+
+<div id="error" class="error"></div>
+<div id="list"></div>
+
+<script>
+// 🔥 FIX ROBUSTE : fallback multi-sources (évite "Failed to fetch")
+// API Vercel (serverless)
+const API_URL = '/api/stations';
+
+let stations = [];
+let userLocation = null;
+
+ catch (e) {
+    throw new Error('JSON parse failed');
+  }
+}
+
+async function fetchData() {
+  try {
+    const res = await fetch(API_URL);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+
+    const data = await res.json();
+    if (!data.features) throw new Error('Bad format');
+
+    stations = data.features;
+    render();
+  } catch (err) {
+    console.error(err);
+    document.getElementById('error').innerText =
+      '❌ Backend Vercel indisponible : ' + err.message;
+  }
+} catch (err) {
+      console.warn('Source failed:', SOURCES[i], err.message);
+    }
+  }
+
+  document.getElementById('error').innerText =
+    '❌ Impossible de charger les données (CORS / .gz bloqué).\n👉 Solution: utiliser un backend proxy (Node.js)';
+}
+
+function getLocation() {
+  navigator.geolocation.getCurrentPosition(pos => {
+    userLocation = {
+      lat: pos.coords.latitude,
+      lon: pos.coords.longitude
+    };
+    render();
+  }, () => {
+    alert('Permission refusée');
+  });
+}
+
+function distance(a, b) {
+  const R = 6371;
+  const dLat = (b.lat - a.lat) * Math.PI/180;
+  const dLon = (b.lon - a.lon) * Math.PI/180;
+  const lat1 = a.lat * Math.PI/180;
+  const lat2 = b.lat * Math.PI/180;
+
+  const x = Math.sin(dLat/2)**2 +
+            Math.sin(dLon/2)**2 * Math.cos(lat1) * Math.cos(lat2);
+  const c = 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1-x));
+  return R * c;
+}
+
+function getPrice(prices, type) {
+  const p = prices.find(p => !type || p.GasType === type);
+  if (!p) return Infinity;
+  return parseFloat(p.Price.replace(/[^0-9.]/g, ''));
+}
+
+function render() {
+  let filtered = [...stations];
+
+  const search = document.getElementById('search').value.toLowerCase();
+  const fuelType = document.getElementById('fuelType').value;
+
+  if (search) {
+    filtered = filtered.filter(s =>
+      s.properties.Name.toLowerCase().includes(search) ||
+      s.properties.Address.toLowerCase().includes(search)
+    );
+  }
+
+  filtered.sort((a, b) => {
+    if (userLocation) {
+      const d1 = distance(userLocation, { lat: a.geometry.coordinates[1], lon: a.geometry.coordinates[0] });
+      const d2 = distance(userLocation, { lat: b.geometry.coordinates[1], lon: b.geometry.coordinates[0] });
+      return d1 - d2;
+    }
+
+    return getPrice(a.properties.Prices, fuelType) - getPrice(b.properties.Prices, fuelType);
+  });
+
+  const list = document.getElementById('list');
+  list.innerHTML = '';
+
+  filtered.slice(0, 100).forEach(s => {
+    const div = document.createElement('div');
+    div.className = 'station';
+
+    const prices = s.properties.Prices
+      .map(p => `${p.GasType}: ${p.Price}`)
+      .join('<br>');
+
+    div.innerHTML = `
+      <strong>${s.properties.Name}</strong><br>
+      ${s.properties.Address}<br>
+      ${s.properties.Region}<br><br>
+      ${prices}
+    `;
+
+    list.appendChild(div);
+  });
+}
+
+// Events
+
+document.getElementById('search').addEventListener('input', render);
+document.getElementById('fuelType').addEventListener('change', render);
+
+// Tests
+console.assert(typeof distance({lat:0,lon:0},{lat:0,lon:0}) === 'number', 'distance() doit retourner un nombre');
+console.assert(getPrice([{GasType:'Régulier', Price:'196.9¢'}], 'Régulier') === 196.9, 'getPrice parsing');
+console.assert(getPrice([{GasType:'Diesel', Price:'200¢'}], 'Régulier') === Infinity, 'getPrice fallback');
+
+fetchData();
+</script>
+
+</body>
+</html>
